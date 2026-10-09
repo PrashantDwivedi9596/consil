@@ -1,0 +1,237 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CREATOR
+  SUBSTITUTE
+  MEMBER
+}
+
+enum PrivacyMode {
+  OPEN
+  PRIVATE
+}
+
+enum RoomType {
+  TEMPORARY
+  PERSISTENT
+}
+
+enum RoomStatus {
+  ACTIVE
+  EXPIRING
+  DELETING
+  DELETED
+}
+
+enum AdmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TargetType {
+  ROOM_SAVE
+  MEDIA_DOWNLOAD
+}
+
+enum VoteStatus {
+  OPEN
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum VoteChoice {
+  YES
+  NO
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  SYSTEM
+}
+
+model User {
+  id               String             @id @default(uuid())
+  username         String
+  avatarUrl        String?
+  status           String             @default("active")
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  deviceIdentities DeviceIdentity[]
+  memberships      RoomMember[]
+  createdRooms     Room[]             @relation("RoomCreator")
+  substitutes      Substitute[]       @relation("AssignedUser")
+  messages         Message[]
+  voteResponses    VoteResponse[]
+  saveRequests     SaveRequest[]
+}
+
+model DeviceIdentity {
+  id                    String    @id @default(uuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  installationTokenHash String    @unique
+  firstSeenAt           DateTime  @default(now())
+  lastSeenAt            DateTime  @updatedAt
+  revokedAt             DateTime?
+}
+
+model Room {
+  id                String             @id @default(uuid())
+  creatorId         String
+  creator           User               @relation("RoomCreator", fields: [creatorId], references: [id])
+  name              String
+  roomType          RoomType           @default(TEMPORARY)
+  privacyMode       PrivacyMode        @default(OPEN)
+  status            RoomStatus         @default(ACTIVE)
+  maxMembers        Int?
+  savedAt           DateTime?
+  expiresAt         DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  members           RoomMember[]
+  substitutes       Substitute[]
+  invites           Invite[]
+  messages          Message[]
+  votes             Vote[]
+  admissionRequests AdmissionRequest[]
+  saveRequests      SaveRequest[]
+}
+
+model RoomMember {
+  id       String    @id @default(uuid())
+  roomId   String
+  room     Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     Role      @default(MEMBER)
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+  status   String    @default("JOINED") // JOINED, LEFT, REMOVED
+
+  @@unique([roomId, userId])
+}
+
+model Substitute {
+  id         String    @id @default(uuid())
+  roomId     String
+  room       Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation("AssignedUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy String
+  assignedAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  @@unique([roomId, userId])
+}
+
+model AdmissionRequest {
+  id         String          @id @default(uuid())
+  roomId     String
+  room       Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId     String
+  status     AdmissionStatus @default(PENDING)
+  reviewedBy String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+}
+
+model SaveRequest {
+  id          String   @id @default(uuid())
+  roomId      String
+  room        Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  initiatorId String
+  initiator   User     @relation(fields: [initiatorId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([roomId, initiatorId])
+}
+
+model Invite {
+  id        String    @id @default(uuid())
+  roomId    String
+  room      Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  code      String    @unique
+  expiresAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  roomId    String
+  room      Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User        @relation(fields: [senderId], references: [id])
+  type      MessageType @default(TEXT)
+  content   String?
+  replyToId String?
+  replyTo   Message?    @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[]   @relation("MessageReplies")
+  createdAt DateTime    @default(now())
+  editedAt  DateTime?
+  deletedAt DateTime?
+  media     Media?
+}
+
+model Media {
+  id              String   @id @default(uuid())
+  messageId       String   @unique
+  message         Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  storageKey      String // Cloudinary public_id
+  url             String
+  mimeType        String
+  size            Int
+  duration        Int?
+  downloadAllowed Boolean  @default(false)
+  createdAt       DateTime @default(now())
+}
+
+model Vote {
+  id                     String         @id @default(uuid())
+  roomId                 String
+  room                   Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  targetType             TargetType
+  targetId               String // roomId for ROOM_SAVE, mediaId for MEDIA_DOWNLOAD
+  status                 VoteStatus     @default(OPEN)
+  eligibleMemberSnapshot Int // Snapshot of joined member count when vote was opened
+  expiresAt              DateTime
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  responses              VoteResponse[]
+}
+
+model VoteResponse {
+  id        String     @id @default(uuid())
+  voteId    String
+  vote      Vote       @relation(fields: [voteId], references: [id], onDelete: Cascade)
+  memberId  String
+  member    User       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  choice    VoteChoice
+  createdAt DateTime   @default(now())
+
+  @@unique([voteId, memberId])
+}
+
+model DailyRoomCounter {
+  id           String   @id @default(uuid())
+  identityKey  String // userId or installationTokenHash
+  calendarDate String // YYYY-MM-DD
+  roomCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([identityKey, calendarDate])
+}
